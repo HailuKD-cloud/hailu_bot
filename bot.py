@@ -1,83 +1,54 @@
-import logging
 import os
-from dotenv import load_dotenv
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
+import logging
+from telegram import Update
+from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
 
-load_dotenv()
+# Enable logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
-OWNER_ID = int(os.getenv("OWNER_ID"))
-
-# Setup logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Dictionary to track categories and files
-file_groups = {}
+# Load environment variables
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHANNEL_ID = os.getenv("CHANNEL_ID")
+ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID"))  # your numeric Telegram user ID
 
-async def start(update: Update, context: CallbackContext):
-    args = context.args
-    if args:
-        group = args[0].lower()
-        files = file_groups.get(group)
-        if files:
-            await update.message.reply_text(f"📂 Files in '{group}':")
-            for file_id, caption in files:
-                await update.message.reply_document(file_id, caption=caption)
-        else:
-            await update.message.reply_text("❌ No files found for that category.")
+# Handle files from admin only
+async def forward_from_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+
+    if user_id != ADMIN_USER_ID:
+        return  # Ignore all users except the admin
+
+    file = update.message.document or update.message.video or update.message.audio or update.message.photo
+    caption = update.message.caption or ""
+
+    if file:
+        if isinstance(file, list):  # for photos, pick the best quality
+            file = file[-1]
+
+        await context.bot.send_document(
+            chat_id=CHANNEL_ID,
+            document=file.file_id,
+            caption=caption
+        )
     else:
-        await update.message.reply_text("Welcome! Send a group name (like 'season1') and upload your files.")
+        await context.bot.send_message(chat_id=CHANNEL_ID, text=caption)
 
-async def setgroup(update: Update, context: CallbackContext):
-    if update.effective_user.id != OWNER_ID:
-        return await update.message.reply_text("⛔ You're not allowed to set categories.")
-    
-    if context.args:
-        context.user_data['current_group'] = context.args[0].lower()
-        await update.message.reply_text(f"✅ Group set to '{context.args[0]}'. Now upload files.")
-    else:
-        await update.message.reply_text("❗ Usage: /setgroup group_name")
+# Main bot
+def main() -> None:
+    if not BOT_TOKEN or not CHANNEL_ID or not ADMIN_USER_ID:
+        raise Exception("Missing environment variables")
 
-async def handle_file(update: Update, context: CallbackContext):
-    if update.effective_user.id != OWNER_ID:
-        return await update.message.reply_text("⛔ Only the admin can upload files.")
-    
-    group = context.user_data.get('current_group')
-    if not group:
-        return await update.message.reply_text("❗ Use /setgroup before uploading files.")
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    doc = update.message.document or update.message.video or update.message.audio
-    if not doc:
-        return await update.message.reply_text("❗ Only documents, videos, or audio files allowed.")
+    # Accept messages with files or media from admin only
+    app.add_handler(MessageHandler(filters.ALL, forward_from_admin))
 
-    # Forward to storage channel
-    sent = await context.bot.send_document(
-        chat_id=CHANNEL_ID,
-        document=doc.file_id,
-        caption=update.message.caption or ""
-    )
-
-    file_id = sent.document.file_id
-    file_groups.setdefault(group, []).append((file_id, update.message.caption or "No caption"))
-
-    await update.message.reply_text("✅ File saved and added to group!")
-
-async def unknown(update: Update, context: CallbackContext):
-    await update.message.reply_text("❓ Unknown command.")
-
-def main():
-    app = Application.builder().token(BOT_TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("setgroup", setgroup))
-    app.add_handler(MessageHandler(filters.Document.ALL | filters.Video.ALL | filters.Audio.ALL, handle_file))
-    app.add_handler(MessageHandler(filters.COMMAND, unknown))
-
-    logger.info("Bot running...")
     app.run_polling()
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
