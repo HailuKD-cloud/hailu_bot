@@ -1,54 +1,53 @@
 import os
-import logging
-from telegram import Update
-from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
+from aiogram import Bot, Dispatcher, types
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.utils import executor
+from aiogram.dispatcher.filters import Command
+from dotenv import load_dotenv
 
-# Enable logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+load_dotenv()
 
-logger = logging.getLogger(__name__)
-
-# Load environment variables
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHANNEL_ID = os.getenv("CHANNEL_ID")
-ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID"))  # your numeric Telegram user ID
+ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID"))  # Set this in Railway
+PUBLIC_CHANNEL_ID = os.getenv("PUBLIC_CHANNEL_ID")  # e.g., "@publicchannel"
+PRIVATE_CHANNEL_ID = os.getenv("PRIVATE_CHANNEL_ID")  # e.g., "@privatechannel"
 
-# Handle files from admin only
-async def forward_from_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_id = update.effective_user.id
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher(bot)
 
-    if user_id != ADMIN_USER_ID:
-        return  # Ignore all users except the admin
-
-    file = update.message.document or update.message.video or update.message.audio or update.message.photo
-    caption = update.message.caption or ""
-
-    if file:
-        if isinstance(file, list):  # for photos, pick the best quality
-            file = file[-1]
-
-        await context.bot.send_document(
-            chat_id=CHANNEL_ID,
-            document=file.file_id,
-            caption=caption
-        )
+# Start command - for you only
+@dp.message_handler(Command("start"))
+async def start_command(message: types.Message):
+    if message.from_user.id == ADMIN_USER_ID:
+        await message.reply("Welcome, Admin! Send me your post details.")
     else:
-        await context.bot.send_message(chat_id=CHANNEL_ID, text=caption)
+        await message.reply("Hi! Please check out our public channel for updates.")
 
-# Main bot
-def main() -> None:
-    if not BOT_TOKEN or not CHANNEL_ID or not ADMIN_USER_ID:
-        raise Exception("Missing environment variables")
+# Handle posts from you (admin)
+@dp.message_handler(lambda message: message.from_user.id == ADMIN_USER_ID, content_types=types.ContentTypes.TEXT | types.ContentTypes.PHOTO)
+async def handle_admin_post(message: types.Message):
+    if message.caption:
+        caption = message.caption
+    else:
+        caption = message.text
 
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    # Add "View & Download" button that links to your private channel
+    buttons = InlineKeyboardMarkup().add(
+        InlineKeyboardButton("📥 View & Download", url=f"https://t.me/{PRIVATE_CHANNEL_ID.lstrip('@')}")
+    )
 
-    # Accept messages with files or media from admin only
-    app.add_handler(MessageHandler(filters.ALL, forward_from_admin))
+    if message.photo:
+        await bot.send_photo(chat_id=PUBLIC_CHANNEL_ID, photo=message.photo[-1].file_id, caption=caption, reply_markup=buttons)
+    else:
+        await bot.send_message(chat_id=PUBLIC_CHANNEL_ID, text=caption, reply_markup=buttons)
 
-    app.run_polling()
+    await message.reply("✅ Posted to public channel with download link.")
 
-if __name__ == "__main__":
-    main()
+# Fallback for others trying to interact
+@dp.message_handler()
+async def fallback_handler(message: types.Message):
+    if message.from_user.id != ADMIN_USER_ID:
+        await message.reply("Access denied. Visit our public channel for latest files!")
+
+if __name__ == '__main__':
+    executor.start_polling(dp, skip_updates=True)
