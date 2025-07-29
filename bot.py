@@ -8,14 +8,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID"))  # Set this in Railway
-PUBLIC_CHANNEL_ID = os.getenv("PUBLIC_CHANNEL_ID")  # e.g., "@publicchannel"
+ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID"))
+PUBLIC_CHANNEL_ID = os.getenv("PUBLIC_CHANNEL_ID")  # e.g., "@hfiles04"
 PRIVATE_CHANNEL_ID = os.getenv("PRIVATE_CHANNEL_ID")  # e.g., "@privatechannel"
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 
-# Start command - for you only
+# Start command
 @dp.message_handler(Command("start"))
 async def start_command(message: types.Message):
     if message.from_user.id == ADMIN_USER_ID:
@@ -23,27 +23,46 @@ async def start_command(message: types.Message):
     else:
         await message.reply("Hi! Please check out our public channel for updates.")
 
-# Handle posts from you (admin)
-@dp.message_handler(lambda message: message.from_user.id == ADMIN_USER_ID, content_types=types.ContentTypes.TEXT | types.ContentTypes.PHOTO)
+# Handle post from admin
+@dp.message_handler(lambda message: message.from_user.id == ADMIN_USER_ID,
+                    content_types=types.ContentTypes.TEXT | types.ContentTypes.PHOTO | types.ContentTypes.DOCUMENT)
 async def handle_admin_post(message: types.Message):
-    if message.caption:
-        caption = message.caption
-    else:
-        caption = message.text
+    caption = message.caption or message.text or "New post"
 
-    # Add "View & Download" button that links to your private channel
+    # View & Download button linking to private channel
     buttons = InlineKeyboardMarkup().add(
         InlineKeyboardButton("📥 View & Download", url=f"https://t.me/{PRIVATE_CHANNEL_ID.lstrip('@')}")
     )
 
+    # Post to public channel
     if message.photo:
-        await bot.send_photo(chat_id=PUBLIC_CHANNEL_ID, photo=message.photo[-1].file_id, caption=caption, reply_markup=buttons)
+        public_msg = await bot.send_photo(
+            chat_id=PUBLIC_CHANNEL_ID,
+            photo=message.photo[-1].file_id,
+            caption=caption,
+            reply_markup=buttons
+        )
+    elif message.document:
+        public_msg = await bot.send_document(
+            chat_id=PUBLIC_CHANNEL_ID,
+            document=message.document.file_id,
+            caption=caption,
+            reply_markup=buttons
+        )
     else:
-        await bot.send_message(chat_id=PUBLIC_CHANNEL_ID, text=caption, reply_markup=buttons)
+        public_msg = await bot.send_message(
+            chat_id=PUBLIC_CHANNEL_ID,
+            text=caption,
+            reply_markup=buttons
+        )
 
-    await message.reply("✅ Posted to public channel with download link.")
+    # Generate public link
+    channel_username = PUBLIC_CHANNEL_ID.lstrip("@")
+    public_link = f"https://t.me/{channel_username}/{public_msg.message_id}"
 
-# Fallback for others trying to interact
+    await message.reply(f"✅ Posted to public channel:\n{public_link}", disable_web_page_preview=True)
+
+# Fallback for non-admins
 @dp.message_handler()
 async def fallback_handler(message: types.Message):
     if message.from_user.id != ADMIN_USER_ID:
